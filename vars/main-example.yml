@@ -1,0 +1,42 @@
+---
+# Name of user which will be created on server
+user: fiyin
+
+# User password
+password: $6$4piYLbbxzrcV4r$sz5ZfjwJY38bT20FKtDDhD6N0jS9Hjf3X6ZvTUnswUUnEjcmlwxBZLwH2m9NwlQXka0QAc8AJE/tTEBxv5vz8.
+
+# Public key of control node
+public_key: ssh-rsa thisisanexampleandnotarealpublickey= root@ansible-control-node
+
+# Domain of your site
+domain_name: example.me
+
+# Domain admin mail 
+server_admin: contact@example.me
+
+# Folder where site will be located
+project_name: laravel-realworld-example-app
+
+# Server hostname
+hostname: server.example.me
+
+# Server Credential (IP, Server host name) to add to hosts file
+host: 192.158.1.38 server.example.me server
+
+# Link to git repository of the laravel project to be deployed
+repo: https://github.com/Fiiyinfoluwa/laravel-realworld-example-app.git
+
+# Site configuration file
+project_conf: laravel-realworld-example-app.conf
+
+# Timezone to set on server
+timezone: Africa/Lagos
+
+#MySQL Credentials
+mysql_root_password: root
+mysql_database: mysqldb
+mysql_user: mysqluser
+mysql_user_password: password
+
+
+disable_default: true

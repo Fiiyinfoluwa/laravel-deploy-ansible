@@ -1,0 +1,198 @@
+---
+- hosts: all
+  become: true
+  become_user: root
+  remote_user: "{{ user }}"
+  vars_files:
+    - vars/default.yml
+
+  tasks:
+    - name: Install Apt
+      apt: name=aptitude update_cache=yes state=latest force_apt_get=yes
+
+    - name: Install packages
+      apt: name={{ item }} state=latest update_cache=yes
+      loop: ['apt-transport-https', 'gnupg2', 'ca-certificates', 'wget', 'git', 'ufw', 'software-properties-common', 'curl']
+
+    - name: Add PHP repository into sources list
+      apt_repository:
+        repo: ppa:ondrej/php
+        state: present
+        update_cache: yes
+
+    - name: Install LAMP and extensions
+      apt: name={{ item }} state=latest update_cache=yes
+      loop: ['apache2', 'php8.1', 'libapache2-mod-php', 'unzip', 'php8.1-common', 'php8.1-intl', 'php8.1-xml', 'php8.1-gd', 'php8.1-opcache', 'php8.1-mbstring', 'php8.1-tokenizer', 'php-json', 'php8.1-imagick', 'php8.1-cli', 'php8.1-soap', 'php8.1-bcmath', 'php8.1-zip', 'php8.1-dev', 'php8.1-curl', 'php8.1-imap', 'php8.1-redis', 'mysql-server', 'php8.1-mysql', 'python3-mysqldb', 'certbot', 'python3-certbot-apache']
+
+    - name: Install Composer
+      shell: 
+        cmd: curl -sS https://getcomposer.org/installer | php
+
+    #Move Composer binary to system path for composer to be accessible globally
+    - name: Move Composer
+      command: mv composer.phar /usr/local/bin/composer
+
+    # Modify php.ini file
+    - name: Edit php.ini file
+      lineinfile:
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        dest: /etc/php/8.1/apache2/php.ini
+      loop:
+        - regexp: "cgi.fix_pathinfo=1"
+          line: "cgi.fix_pathinfo=0"
+        - regexp: "upload_max_filesize = 2M"
+          line: "upload_max_filesize = 32M"
+        - regexp: "post_max_size = 8M"
+          line: "post_max_size = 48M"
+        - regexp: "memory_limit = 128M"
+          line: "memory_limit = 256M"
+        - regexp: "max_execution_time = 30"
+          line: "max_execution_time = 600"
+        - regexp: "max_input_vars = 1000"
+          line: "max_input_vars = 3000"
+        - regexp: "max_input_time"
+          line: "max_input_time = 1000"
+        - regexp: "date.timezone ="
+          line: "date.timezone = Africa/Lagos"
+
+    #MySQL Configuration
+    - name: Set the root mysql user password
+      community.mysql.mysql_user:
+        name: root
+        password: "{{ mysql_root_password }}"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Create mySQL user
+      community.mysql.mysql_user:
+        name: "{{ mysql_user }}"
+        password: "{{ mysql_user_password }}"
+        priv: '*.*:ALL,GRANT'
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+    
+    - name: Remove test database
+      community.mysql.mysql_db:
+        name: test
+        state: absent
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+
+    - name: Create a new database 
+      community.mysql.mysql_db:
+        name: "{{ mysql_database }}"
+        state: present
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+           
+    - name: Update IP address in host file
+      lineinfile:
+        path: /etc/hosts
+        line: "{{ host }}"
+        state: present
+        create: yes
+
+    #Firewall Configuration    
+    - name: Allow OpenSSH
+      ufw:
+        rule: allow
+        name: OpenSSH
+    
+    - name: Allow Apache Full
+      ufw:
+        rule: allow
+        name: Apache Full
+    
+    - name: Enable firewall
+      ufw:
+        state: enabled
+        
+    #Repo setup     
+    - name: Clone laravel repo 
+      git:
+        repo: "{{ repo }}"
+        dest: /var/www/html/{{ project_name }}
+
+    - name: Create Document Root
+      file:
+        path: "/var/www/html/{{ project_name }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: 0775
+        recurse: yes
+
+    # Install Composer Depencies
+    - name: Download project and Install dependencies
+      shell: cd /var/www/html/{{ project_name }} && composer create-project -n
+
+    - name: Modify .env file
+      copy:
+        src: /var/www/html/{{ project_name }}/.env.example
+        dest: /var/www/html/{{ project_name }}/.env
+        remote_src: yes
+
+    - name: Modify .env with Database Credentials
+      lineinfile:
+        line: "{{ item.line }}"
+        regexp: "{{ item.regexp }}"
+        path: /var/www/html/{{ project_name }}/.env
+      loop:
+        - line: DB_CONNECTION=mysql
+          regexp: ^DB_CONNECTION
+        - line: DB_HOST=127.0.0.1
+          regexp: ^DB_HOST
+        - line: DB_PORT=3306
+          regexp: ^DB_PORT
+        - line: DB_DATABASE={{ mysql_database }}
+          regexp: ^DB_DATABASE
+        - line: DB_USERNAME={{ mysql_user }}
+          regexp: ^DB_USERNAME
+        - line: DB_PASSWORD={{ mysql_user_password }}
+          regexp: ^DB_PASSWORD
+
+    - name: Copy .htaccess file
+      template:
+        src: "files/.htaccess"
+        dest: /var/www/html/{{ project_name }}/.htaccess
+
+    #Database Migration
+    - name: Run artisan migrate
+      shell: cd /var/www/html/{{ project_name }} && php artisan migrate --seed --force
+
+    #Apache Configuration    
+    - name: Setup Apache Virtual Host
+      template: 
+        src: "files/apache.conf.j2"
+        dest: "/etc/apache2/sites-available/{{ project_conf }}"
+      notify: Reload Apache
+
+    - name: Enable the Apache2 module rewrite
+      apache2_module:
+        state: present
+        name: rewrite
+
+    - name: Enable Apache Site
+      shell: /usr/sbin/a2ensite {{ project_conf }}
+      notify: Reload Apache
+
+    - name: Disable Default Apache Site
+      shell: /usr/sbin/a2dissite 000-default.conf
+      when: disable_default
+      notify: Restart Apache
+
+    #TLS/SSL CONFIGURATION
+    - name: Install SSL/TLS
+      shell: certbot --apache --agree-tos --no-eff-email --redirect -m {{ server_admin }} -d {{ domain_name }} -d www.{{ domain_name }}
+      notify: Reload Apache
+     
+  handlers:
+    - name: Reload Apache
+      service: 
+        name: apache2
+        state: reloaded
+
+    - name: Restart Apache
+      service: 
+        name: apache2 
+        state: restarted

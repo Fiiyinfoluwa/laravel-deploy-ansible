@@ -1,0 +1,55 @@
+---
+- hosts: all
+  become: true
+  become_user: root
+  vars_files:
+    - ~/altschool-cloud-assignment/project-exam/vars/default.yml
+   
+  tasks:
+  - name: Add new user
+    user:
+      name: "{{ user }}"
+      password: "{{ password }}"
+      append: yes
+      state: present
+      shell: /bin/bash
+      update_password: always
+
+  - name: Create ssh directory
+    file:
+      path: /home/{{ user }}/.ssh
+      state: directory
+      owner: "{{ user }}"
+      group: "{{ user }}"
+      mode: 0770
+
+  - name: Make new user owner of ssh file
+    file:
+      path: /home/{{ user }}/.ssh/authorized_keys
+      owner: "{{ user }}"
+      group: "{{ user }}"
+      state: touch
+
+  - name: Add ssh key for new user
+    command: echo "{{ public_key }}" >> /home/{{ user }}/.ssh/authorized_keys
+
+  - name: Disable password authentication
+    lineinfile:
+      dest: /etc/ssh/sshd_config
+      regexp: "^PasswordAuthentication"
+      line: "PasswordAuthentication no"
+      state: present
+    become: true
+    notify: Restart ssh
+    
+  - name: Add new user to sudoers group
+    command: echo "{{ user }} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+  - name: Set hostname of machine
+    hostname:
+      name: "{{ hostname }}"
+  
+  - name: Set timezone
+    timezone:
+      name: "{{ timezone }}"
+  
